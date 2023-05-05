@@ -25,10 +25,9 @@ module tb_axi_stream_insert_header(
 parameter DATA_WD       = 32                    ;
 parameter DATA_BYTE_WD  = DATA_WD / 8           ;
 parameter BYTE_CNT_WD   = $clog2(DATA_BYTE_WD)  ;
-//parameter BYTE_CNT_WD   = 2                     ;
+parameter BIT_CNT_WD    = $clog2(DATA_WD)       ;
 parameter TOTAL_NUM     = 512                   ;
 parameter TOTAL_NUM_WD  = $clog2(TOTAL_NUM)     ;
-//parameter TOTAL_NUM_WD  = 10                    ;
 
 reg                 clk         ;
 reg                 rst_n       ;
@@ -45,23 +44,50 @@ wire [DATA_BYTE_WD-1 : 0]       keep_out        ;
 wire                            last_out        ; 
 reg                             ready_out       ;       // from next module
 // The header to be inserted to AXI Stream input
-reg                             valid_insert   ;
-reg     [DATA_WD-1 : 0]         data_insert    ;
-reg     [DATA_BYTE_WD-1 : 0]    keep_insert    ;
-reg     [BYTE_CNT_WD : 0]       byte_insert_cnt;
-wire                            ready_insert   ;
+reg                             valid_insert    ;
+reg     [DATA_WD-1 : 0]         data_insert     ;
+reg     [DATA_BYTE_WD-1 : 0]    keep_insert     ;
+reg     [BYTE_CNT_WD : 0]       byte_insert_cnt ;
+wire                            ready_insert    ;
 // for simulation
 wire                            handshake       ;
 reg     [TOTAL_NUM_WD : 0]      data_in_cnt     ;
 
 
-function integer clog2 (input integer n); begin
-  n = n - 1;
-  for (clog2 = 0; n > 0; clog2 = clog2 + 1)
-    n = n >> 1;
-end
+function integer clog2;
+    input integer n; 
+    begin
+    n = n - 1;
+    for (clog2 = 0; n > 0; clog2 = clog2 + 1)
+        n = n >> 1;
+    end
 endfunction    
-    
+
+function [DATA_BYTE_WD-1 : 0] generate_keep_insert;
+    input   [BIT_CNT_WD-1 : 0]  num;
+    integer i;
+    begin
+    generate_keep_insert = 0;
+        for (i = 0; i < num; i = i + 1)  begin
+            generate_keep_insert = generate_keep_insert << 1;
+            generate_keep_insert[0] = 1;
+        end
+    end
+endfunction
+
+function [DATA_BYTE_WD-1 : 0] generate_keep_last_in;
+    input   [BIT_CNT_WD-1 : 0]  num;
+    integer i;
+    begin
+    generate_keep_last_in = 0;
+        for (i = 0; i < num; i = i + 1)  begin
+            generate_keep_last_in = generate_keep_last_in >> 1;
+            generate_keep_last_in[DATA_BYTE_WD-1] = 1;
+        end
+    end
+endfunction
+
+   
 initial begin
     clk = 0;
     rst_n = 0;
@@ -88,18 +114,18 @@ initial begin
     #20
     valid_insert    = 1;
     data_insert     = 32'hffffffff;
-    keep_insert     = 4'b0001;
-    byte_insert_cnt = 1;
+    byte_insert_cnt = {$random}%(DATA_BYTE_WD) + 1;
+    keep_insert     = generate_keep_insert(byte_insert_cnt);
     
-    #300
-    ready_out = 0;
-    #100
-    ready_out = 1;
+//    #300
+//    ready_out = 0;
+//    #100
+//    ready_out = 1;
 end
 
 always #10 clk = ~clk;
 
-assign handshake = valid_insert & valid_in & ready_out;
+assign handshake = valid_insert & valid_in & ready_in & ready_insert;
 
 always @(posedge clk)  begin
     if(handshake)    begin
@@ -111,29 +137,42 @@ always @(posedge clk)  begin
         end
         else if(data_in_cnt == TOTAL_NUM-1) begin
             data_in <= $random % 2147483647;
-            keep_in <= 4'b1000;
+            keep_in <= generate_keep_last_in({$random}%(DATA_BYTE_WD) + 1);
+            keep_in <= generate_keep_last_in({$random}%(DATA_BYTE_WD) + 1);
             last_in <= 1;
             data_in_cnt <= data_in_cnt + 1;
         end
         else    begin
-            data_in_cnt <= data_in_cnt;
-            valid_in <= 0;
+            data_in <= $random % 2147483647;
+            keep_in <= 4'b1111;
+            byte_insert_cnt = {$random}%(DATA_BYTE_WD) + 1;
+            keep_insert <= generate_keep_insert(byte_insert_cnt);
             last_in <= 0;
+            data_in_cnt <= 0;
         end
     end
     else    begin
         data_in <= data_in;
         keep_in <= keep_in;
-        last_in <= last_in;
         data_in_cnt <= data_in_cnt;
+        byte_insert_cnt <= byte_insert_cnt ;
+        keep_insert     <= keep_insert     ;
     end
+end
+
+always @(posedge clk)  begin
+    if(last_in)
+        last_in <= 0;
+    else
+        last_in <= last_in;
 end
 
 
 axi_stream_insert_header #(
-    .DATA_WD     (DATA_WD     )    ,
-    .DATA_BYTE_WD(DATA_BYTE_WD)    ,
-    .BYTE_CNT_WD (BYTE_CNT_WD )    
+    .DATA_WD        (DATA_WD     )    ,
+    .DATA_BYTE_WD   (DATA_BYTE_WD)    ,
+    .BYTE_CNT_WD    (BYTE_CNT_WD )    ,
+    .BIT_CNT_WD     (BIT_CNT_WD  )
 ) axi_stream_insert_header_u (
     .clk  (clk  )    ,
     .rst_n(rst_n)    ,
@@ -156,6 +195,7 @@ axi_stream_insert_header #(
     .byte_insert_cnt(byte_insert_cnt)   ,
     .ready_insert   (ready_insert   )   
 );
+
 
   
 endmodule
